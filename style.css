@@ -96,9 +96,15 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   padding-right: 4px;
 }
 .floorRow .num { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
-.floorRow button { padding: 2px 10px; font-size: 13px; }
-.floorRow.pending button { background: var(--warn); border-color: var(--warn); color: #fff; }
-.floorRow .lamp { margin-left: auto; font-size: 12px; color: var(--warn); }
+.hall { display: flex; gap: 4px; }
+.hall button, .hall .ph { width: 30px; height: 28px; padding: 0; font-size: 12px; border-radius: 50%; }
+.hall .ph { display: inline-block; }
+button.lit { background: var(--warn); border-color: var(--warn); color: #fff; }
+.floorRow .lamp { margin-left: auto; font-size: 12px; color: var(--warn); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.carPanel { display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); gap: 6px; max-width: 360px; }
+.carPanel button { padding: 4px 0; border-radius: 50%; aspect-ratio: 1; font-variant-numeric: tabular-nums; max-width: 100%; }
+.riders { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
 
 .shaft {
   position: relative;
@@ -137,6 +143,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .carLabel {
   position: relative;
   font-weight: 700;
+  font-size: 13px;
   color: var(--panel);
   text-shadow: 0 0 2px var(--car);
   pointer-events: none;

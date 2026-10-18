@@ -21,3 +21,37 @@ assert.deepStrictEqual(f.served.map((s) => s.floor), [10, 5]);
 const l = E.simulate('LOOK', 1, [10, 5], 10, 0);
 assert.deepStrictEqual(l.served.map((s) => s.floor), [5, 10]);
 console.log('✓ 顺路停靠规则正确');
+
+// ---- 带方向的外呼 ----
+// 10 层楼，电梯在 1 楼向上；有人在 5 楼按 ▼、3 楼按 ▲，车里有人按了 8
+const reqs = () => [
+  { floor: 5, type: 'down', t: 0 },
+  { floor: 3, type: 'up', t: 1 },
+  { floor: 8, type: 'car', t: 2 },
+];
+const order = (r) => r.served.map((s) => E.label(s)).join(' ');
+
+// LOOK：上行时 5 楼▼ 不顺路，先接 3▲、放 8，再掉头回来接 5▼
+let r = E.run('LOOK', 1, reqs(), 10, 1);
+assert.strictEqual(order(r), '3楼▲ 8楼(内) 5楼▼');
+assert.strictEqual(r.distance, 10);
+// SCAN：同样的顺序，但放完 8 楼还要扫到 10 楼才掉头
+r = E.run('SCAN', 1, reqs(), 10, 1);
+assert.strictEqual(order(r), '3楼▲ 8楼(内) 5楼▼');
+assert.strictEqual(r.distance, 14);
+// SSTF 不看方向：路过 5 楼就把想下楼的人接上了
+r = E.run('SSTF', 1, reqs(), 10, 1);
+assert.strictEqual(order(r), '3楼▲ 5楼▼ 8楼(内)');
+// FCFS：严格按按下的顺序
+r = E.run('FCFS', 1, reqs(), 10, 1);
+assert.strictEqual(order(r), '5楼▼ 3楼▲ 8楼(内)');
+console.log('✓ 外呼方向规则正确（LOOK/SCAN 只顺路接同方向）');
+
+// LOOK：前方只有反方向呼叫时，走到那一层再掉头接
+r = E.run('LOOK', 1, [{ floor: 6, type: 'down', t: 0 }], 10, 1);
+assert.strictEqual(r.distance, 5);
+// 空闲时本层有人按 ▼：直接开门，方向定为向下
+const st = E.stops('LOOK', 4, 0, [{ floor: 4, type: 'down', t: 0 }], 10);
+assert.strictEqual(st.serve.length, 1);
+assert.strictEqual(st.dir, -1);
+console.log('✓ 掉头与空闲开门正确');

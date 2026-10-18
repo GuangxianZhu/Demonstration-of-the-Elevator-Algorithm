@@ -24,11 +24,12 @@
       dir: 0,
       target: null,
       door: 0,
-      pending: [],      // { floor, t }
-      served: [],       // { floor, wait, t }
+      pending: [],      // { floor, type: 'up'|'down'|'car', t }
+      riders: [],       // 车里的乘客 { dest }
+      served: [],       // 被接上的外呼 { floor, wait }
       distance: 0,
       time: 0,
-      lastReason: '',
+      lastKey: '',
       trace: [],        // { t, y }
       stops: [],        // { t, y }
       traceAcc: 0,
@@ -63,12 +64,29 @@
       row.dataset.floor = f;
       row.innerHTML =
         '<span class="num">' + f + 'F</span>' +
-        '<button type="button">呼叫</button>' +
+        '<span class="hall">' +
+        (f < S.N ? '<button type="button" class="up" aria-label="' + f + ' 楼上行">▲</button>' : '<span class="ph"></span>') +
+        (f > 1 ? '<button type="button" class="down" aria-label="' + f + ' 楼下行">▼</button>' : '<span class="ph"></span>') +
+        '</span>' +
         '<span class="lamp"></span>';
-      row.querySelector('button').addEventListener('click', addRequest.bind(null, f));
+      var up = row.querySelector('.up');
+      var down = row.querySelector('.down');
+      if (up) up.addEventListener('click', addRequest.bind(null, f, 'up'));
+      if (down) down.addEventListener('click', addRequest.bind(null, f, 'down'));
       floorsCol.appendChild(row);
     }
     $('shaft').style.height = S.N * ROW_H + 'px';
+
+    var panel = $('carPanel');
+    panel.innerHTML = '';
+    for (var g = 1; g <= S.N; g++) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = g;
+      b.dataset.floor = g;
+      b.addEventListener('click', addRequest.bind(null, g, 'car'));
+      panel.appendChild(b);
+    }
   }
 
   function reset() {
@@ -77,57 +95,94 @@
     S = freshState(N);
     buildBuilding();
     $('log').innerHTML = '';
-    log('电梯停在 1 楼，等待请求。');
+    log('电梯停在 1 楼，等待呼叫。');
     render();
   }
 
   function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
 
   // ---------------- 请求 ----------------
-  function addRequest(f) {
-    if (f < 1 || f > S.N) return;
-    if (S.pending.some(function (p) { return p.floor === f; })) return; // 同层已有请求，合并
-    if (!S.moving && S.door <= 0 && S.floor === f && !S.pending.length) {
-      // 就在这一层且空闲：直接开门
-      S.pending.push({ floor: f, t: S.time });
-      plan();
-      return;
+  function findReq(f, type) {
+    for (var i = 0; i < S.pending.length; i++) {
+      if (S.pending[i].floor === f && S.pending[i].type === type) return S.pending[i];
     }
-    S.pending.push({ floor: f, t: S.time });
-    log(f + ' 楼有人按了按钮。');
+    return null;
+  }
+
+  function addRequest(f, type) {
+    if (f < 1 || f > S.N) return;
+    if (type === 'up' && f === S.N) return;
+    if (type === 'down' && f === 1) return;
+    if (findReq(f, type)) return; // 同一个按钮已经亮着，再按也只是一个请求
+    // 电梯正停在这层开着门，而且方向对得上：直接进来，不用排队
+    if (S.door > 0 && S.floor === f) {
+      if (type === 'car') return;
+      if (algo() !== 'FCFS' && (S.dir === 0 || E.typeDir(type) === S.dir || algo() === 'SSTF')) {
+        board({ floor: f, type: type, t: S.time });
+        S.door = DOOR_TIME;
+        return;
+      }
+    }
+    S.pending.push({ floor: f, type: type, t: S.time });
+    if (type === 'car') log('车里有人按了 ' + f + ' 楼。');
+    else log(f + ' 楼有人按了 ' + (type === 'up' ? '▲ 上行' : '▼ 下行') + '。');
   }
 
   function randomFloor(lo, hi) {
     return lo + Math.floor(Math.random() * (hi - lo + 1));
   }
 
+  function randomCall(lo, hi) {
+    var f = randomFloor(lo, hi);
+    var type = f === S.N ? 'down' : f === 1 ? 'up' : Math.random() < 0.5 ? 'up' : 'down';
+    addRequest(f, type);
+  }
+
   // ---------------- 调度核心 ----------------
-  function serveHere() {
-    var f = S.floor;
-    var idx = S.pending.findIndex(function (p) { return p.floor === f; });
-    var req = S.pending.splice(idx, 1)[0];
+  // 接上一位在厅外等的乘客：他进门后按一个和他呼叫方向一致的目标楼层
+  function board(req) {
+    var f = req.floor;
+    var dest = req.type === 'up' ? randomFloor(f + 1, S.N) : randomFloor(1, f - 1);
     var wait = S.time - req.t;
-    S.served.push({ floor: f, wait: wait, t: S.time });
-    S.stops.push({ t: S.time, y: f });
+    S.served.push({ floor: f, wait: wait });
+    S.riders.push({ dest: dest });
+    log('在 ' + E.label(req) + ' 接上一位乘客（等了 ' + wait.toFixed(1) + ' 秒），他按了 ' + dest + ' 楼。', 'serve');
+    if (!findReq(dest, 'car')) S.pending.push({ floor: dest, type: 'car', t: S.time });
+  }
+
+  function serve(list) {
+    list.forEach(function (req) {
+      S.pending.splice(S.pending.indexOf(req), 1);
+      if (req.type === 'car') {
+        var before = S.riders.length;
+        S.riders = S.riders.filter(function (r) { return r.dest !== req.floor; });
+        var out = before - S.riders.length;
+        log('到达 ' + req.floor + ' 楼，' + (out ? out + ' 位乘客下车' : '开门') + '。', 'serve');
+      }
+    });
+    list.forEach(function (req) { if (req.type !== 'car') board(req); });
+    S.stops.push({ t: S.time, y: S.floor });
     S.door = DOOR_TIME;
-    log('到达 ' + f + ' 楼，开门服务（等待了 ' + wait.toFixed(1) + ' 秒）。', 'serve');
   }
 
   function plan() {
-    if (E.canServe(algo(), S.floor, S.pending)) {
-      serveHere();
+    var st = E.stops(algo(), S.floor, S.dir, S.pending, S.N);
+    if (st.serve.length) {
+      if (st.dir !== S.dir && S.dir !== 0 && st.dir !== 0) log('前方没有要处理的请求了，在 ' + S.floor + ' 楼掉头' + E.dirText(st.dir) + '。');
+      S.dir = st.dir;
+      serve(st.serve);
+      S.lastKey = '';
       return;
     }
     var d = E.decide(algo(), S.floor, S.dir, S.pending, S.N);
     S.target = d.target;
     // 目标或方向变了才记一条，避免每经过一层都刷屏
     var key = d.target + '|' + d.dir;
-    if (key !== S.lastReason) {
+    if (key !== S.lastKey) {
       log(d.reason);
-      S.lastReason = key;
+      S.lastKey = key;
     }
     if (d.target === null) {
-      // SCAN/LOOK 空闲时清掉方向，下次按最近的请求定方向
       S.dir = 0;
       return;
     }
@@ -142,23 +197,24 @@
     S.time += dt;
 
     // 自动请求
-    if ($('auto').checked || S.time < S.starveUntil) {
+    var starving = S.time < S.starveUntil;
+    if ($('auto').checked || starving) {
       S.autoAcc += dt;
-      var every = S.time < S.starveUntil ? 1.6 : 2.5;
+      var every = starving ? 1.6 : 3;
       while (S.autoAcc >= every) {
         S.autoAcc -= every;
-        if (S.time < S.starveUntil) {
+        if (starving) {
           var mid = Math.ceil(S.N / 2);
-          addRequest(randomFloor(mid - 1, mid + 1));
+          randomCall(mid - 1, mid + 1);
         } else {
-          addRequest(randomFloor(1, S.N));
+          randomCall(1, S.N);
         }
       }
     }
 
     if (S.door > 0) {
       S.door -= dt;
-      if (S.door <= 0) { S.door = 0; S.lastReason = ''; plan(); }
+      if (S.door <= 0) { S.door = 0; plan(); }
     } else if (S.moving) {
       S.progress += dt / FLOOR_TIME;
       if (S.progress >= 1) {
@@ -192,17 +248,30 @@
     var car = $('car');
     car.style.transform = 'translateY(' + ((S.N - pos) * ROW_H + 3) + 'px)';
     car.classList.toggle('open', S.door > 0);
-    $('carLabel').textContent = Math.round(pos);
+    $('carLabel').textContent = (S.dir > 0 ? '▲' : S.dir < 0 ? '▼' : '') + Math.round(pos);
 
-    var pend = {};
-    S.pending.forEach(function (p) { pend[p.floor] = p; });
     var rows = floorsCol.children;
     for (var i = 0; i < rows.length; i++) {
       var f = +rows[i].dataset.floor;
-      var on = !!pend[f];
-      rows[i].classList.toggle('pending', on);
-      rows[i].querySelector('.lamp').textContent = on ? '等待 ' + (S.time - pend[f].t).toFixed(0) + 's' : '';
+      var up = findReq(f, 'up');
+      var down = findReq(f, 'down');
+      var ub = rows[i].querySelector('.up');
+      var db = rows[i].querySelector('.down');
+      if (ub) ub.classList.toggle('lit', !!up);
+      if (db) db.classList.toggle('lit', !!down);
+      var txt = [];
+      if (up) txt.push('▲' + (S.time - up.t).toFixed(0) + 's');
+      if (down) txt.push('▼' + (S.time - down.t).toFixed(0) + 's');
+      rows[i].querySelector('.lamp').textContent = txt.join(' ');
     }
+
+    var btns = $('carPanel').children;
+    for (var j = 0; j < btns.length; j++) {
+      btns[j].classList.toggle('lit', !!findReq(+btns[j].dataset.floor, 'car'));
+    }
+    $('riders').textContent = S.riders.length
+      ? '车内 ' + S.riders.length + ' 人，要去：' + S.riders.map(function (r) { return r.dest; }).join('、') + ' 楼'
+      : '车内没有乘客';
 
     $('sFloor').textContent = Math.round(pos);
     $('sDir').textContent = (S.dir > 0 ? '↑ ' : S.dir < 0 ? '↓ ' : '') + E.dirText(S.dir);
@@ -225,8 +294,9 @@
     } else {
       q.innerHTML = S.pending.map(function (p) {
         var w = S.time - p.t;
-        var cls = 'chip' + (p.floor === S.target ? ' target' : '') + (w > 20 ? ' old' : '');
-        return '<span class="' + cls + '"><b>' + p.floor + '</b>F · ' + w.toFixed(0) + 's</span>';
+        var cls = 'chip' + (p.floor === S.target ? ' target' : '') + (p.type !== 'car' && w > 20 ? ' old' : '');
+        var mark = p.type === 'up' ? '▲' : p.type === 'down' ? '▼' : '内';
+        return '<span class="' + cls + '"><b>' + p.floor + '</b>' + mark + ' · ' + w.toFixed(0) + 's</span>';
       }).join('');
     }
 
@@ -282,12 +352,11 @@
   // ---------------- 事件 ----------------
   function updateAlgoDesc() {
     var a = ALGOS[algo()];
-    $('algoDesc').innerHTML = '<b>' + a.name + '</b>：' + a.short +
-      (a.stopOnPass ? ' 路过有请求的楼层会顺路停。' : ' 路过有请求的楼层<b>不停</b>。');
+    $('algoDesc').innerHTML = '<b>' + a.name + '</b>：' + a.short;
   }
   $('algo').addEventListener('change', function () {
     updateAlgoDesc();
-    S.lastReason = '';
+    S.lastKey = '';
     log('切换算法为 ' + ALGOS[algo()].name + '。');
   });
   $('speed').addEventListener('input', function () { $('speedVal').textContent = speed() + '×'; });
@@ -298,12 +367,12 @@
   $('reset').addEventListener('click', reset);
   $('floors').addEventListener('change', reset);
   $('burst').addEventListener('click', function () {
-    for (var i = 0; i < 5; i++) addRequest(randomFloor(1, S.N));
+    for (var i = 0; i < 5; i++) randomCall(1, S.N);
   });
   $('starve').addEventListener('click', function () {
-    addRequest(S.N);
+    addRequest(S.N, 'down');
     S.starveUntil = S.time + 30;
-    log('饥饿场景：顶楼 ' + S.N + ' 楼有人在等，接下来 30 秒中间几层会不停有人按。试试 SSTF 和 LOOK 的区别。');
+    log('饥饿场景：顶楼 ' + S.N + ' 楼有人按了 ▼ 在等，接下来 30 秒中间几层会不停有人按。试试 SSTF 和 LOOK 的区别。');
   });
 
   // ---------------- 离线对比 ----------------
@@ -361,7 +430,7 @@
     out += '<polyline fill="none" stroke="' + color + '" stroke-width="2" stroke-linejoin="round" points="' +
       r.path.map(function (f, i) { return x(i).toFixed(1) + ',' + y(f).toFixed(1); }).join(' ') + '"/>';
     r.served.forEach(function (s, i) {
-      out += '<circle cx="' + x(s.step).toFixed(1) + '" cy="' + y(s.floor).toFixed(1) + '" r="3" fill="' + color + '"><title>第 ' + (i + 1) + ' 个服务：' + s.floor + ' 楼</title></circle>';
+      out += '<circle cx="' + x(s.step).toFixed(1) + '" cy="' + y(s.floor).toFixed(1) + '" r="3" fill="' + color + '"><title>第 ' + (i + 1) + ' 站：' + s.floor + ' 楼</title></circle>';
     });
     out += '<circle cx="' + x(0) + '" cy="' + y(r.path[0]) + '" r="3.5" fill="none" stroke="' + color + '" stroke-width="1.5"/>';
     return out + '</svg>';
@@ -381,14 +450,18 @@
   $('loadSeq').addEventListener('click', function () {
     var seq = parseSeq();
     var need = Math.max.apply(null, seq.concat([parseInt($('start').value, 10) || 1, 4]));
-    if (need > 20) { alert('实时模拟最多 20 层。'); return; }
+    if (need > 20) { log('实时模拟最多 20 层，请把楼层控制在 20 以内。'); return; }
     if (need > S.N) $('floors').value = need;
     reset();
     var start = parseInt($('start').value, 10) || 1;
     S.floor = S.from = S.to = start;
     S.dir = parseInt($('initDir').value, 10);
-    seq.forEach(addRequest);
-    log('已载入请求序列，起点 ' + start + ' 楼，初始方向' + E.dirText(S.dir) + '。');
+    seq.forEach(function (f) {
+      if (f === start) return;
+      if (!findReq(f, 'car')) S.pending.push({ floor: f, type: 'car', t: 0 });
+      S.riders.push({ dest: f });
+    });
+    log('已载入：电梯停在 ' + start + ' 楼，车里的乘客按了 ' + seq.join('、') + ' 楼，初始方向' + E.dirText(S.dir) + '。');
     $('car').scrollIntoView({ behavior: 'smooth', block: 'center' });
   });
 
