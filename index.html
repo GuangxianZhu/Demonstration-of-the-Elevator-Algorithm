@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>电梯算法演示</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>电梯调度算法演示</h1>
+    <p class="sub">点楼层按钮发请求，看电梯按不同算法怎么跑。下面还有同一组请求下四种算法的路径对比。</p>
+  </header>
+
+  <main>
+    <!-- ============ 实时模拟 ============ -->
+    <section class="card">
+      <h2>实时模拟</h2>
+      <div class="controls">
+        <label>算法
+          <select id="algo"></select>
+        </label>
+        <label>楼层数
+          <input id="floors" type="number" min="4" max="20" value="10" />
+        </label>
+        <label>速度
+          <input id="speed" type="range" min="0.5" max="4" step="0.5" value="1" />
+          <span id="speedVal">1×</span>
+        </label>
+        <button id="pause">暂停</button>
+        <button id="reset">重置</button>
+      </div>
+      <div class="controls">
+        <label class="check"><input id="auto" type="checkbox" /> 随机自动请求</label>
+        <button id="burst">随机来 5 个请求</button>
+        <button id="starve" title="顶楼有人等，同时中间几层不断有人按">制造“饥饿”场景</button>
+      </div>
+      <p class="algoDesc" id="algoDesc"></p>
+
+      <div class="sim">
+        <div class="building" id="building">
+          <div class="shaft" id="shaft">
+            <div class="car" id="car">
+              <div class="door left"></div>
+              <div class="door right"></div>
+              <span class="carLabel" id="carLabel">1</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="side">
+          <div class="stats">
+            <div><span class="k">当前楼层</span><span class="v" id="sFloor">1</span></div>
+            <div><span class="k">方向</span><span class="v" id="sDir">静止</span></div>
+            <div><span class="k">目标</span><span class="v" id="sTarget">—</span></div>
+            <div><span class="k">累计移动</span><span class="v" id="sDist">0 层</span></div>
+            <div><span class="k">已服务</span><span class="v" id="sServed">0</span></div>
+            <div><span class="k">平均等待</span><span class="v" id="sAvg">—</span></div>
+            <div><span class="k">最长等待</span><span class="v" id="sMax">—</span></div>
+          </div>
+
+          <h3>请求队列 <small>（按到达顺序，数字是已等待秒数）</small></h3>
+          <div class="queue" id="queue"></div>
+
+          <h3>决策过程</h3>
+          <ol class="log" id="log"></ol>
+        </div>
+      </div>
+
+      <h3>楼层-时间轨迹 <small>（最近 40 秒，圆点 = 停靠服务）</small></h3>
+      <svg class="trace" id="trace" viewBox="0 0 600 160" preserveAspectRatio="none"></svg>
+    </section>
+
+    <!-- ============ 离线对比 ============ -->
+    <section class="card">
+      <h2>同一组请求，四种算法对比</h2>
+      <p class="hint">假设所有请求一开始就已知（相当于操作系统课里的磁盘调度题），比较总移动层数。</p>
+      <div class="controls">
+        <label class="grow">请求楼层序列
+          <input id="seq" type="text" value="2, 9, 4, 10, 1, 7, 3" />
+        </label>
+        <label>起点
+          <input id="start" type="number" min="1" max="20" value="5" />
+        </label>
+        <label>初始方向
+          <select id="initDir">
+            <option value="1">向上</option>
+            <option value="-1">向下</option>
+          </select>
+        </label>
+      </div>
+      <div class="controls">
+        <label>先猜一猜：哪种总移动最少？
+          <select id="guess">
+            <option value="">（不猜）</option>
+            <option value="FCFS">FCFS</option>
+            <option value="SSTF">SSTF</option>
+            <option value="SCAN">SCAN</option>
+            <option value="LOOK">LOOK</option>
+          </select>
+        </label>
+        <button id="compare" class="primary">计算并对比</button>
+        <button id="loadSeq" title="把这组请求放进上面的实时模拟里跑一遍">放进实时模拟</button>
+        <button id="randSeq">随机一组</button>
+      </div>
+      <p id="guessResult" class="guessResult"></p>
+      <div class="compare" id="compareOut"></div>
+    </section>
+
+    <section class="card notes">
+      <h2>原理速记</h2>
+      <table>
+        <thead><tr><th>算法</th><th>规则</th><th>优点</th><th>缺点</th></tr></thead>
+        <tbody>
+          <tr><td>FCFS</td><td>按请求到达顺序逐个去</td><td>绝对公平，实现最简单</td><td>来回乱跑，总路程最长</td></tr>
+          <tr><td>SSTF</td><td>永远去离当前最近的请求</td><td>总路程通常很短</td><td>远处的请求可能一直等（饥饿）</td></tr>
+          <tr><td>SCAN</td><td>沿一个方向扫到尽头再掉头</td><td>每个请求最多等一个来回，不会饥饿</td><td>尽头没人也要跑过去，白跑几层</td></tr>
+          <tr><td>LOOK</td><td>沿一个方向走，前方没请求就掉头</td><td>保留 SCAN 的公平，又省掉空跑</td><td>两端楼层的平均等待仍比中间长</td></tr>
+        </tbody>
+      </table>
+      <p class="hint">真实电梯大多是 LOOK 的变体：还要区分“上行呼叫”和“下行呼叫”、考虑载重和多台电梯协同，这里为了看清核心思想做了简化：每层只有一个“去这层”的请求。</p>
+    </section>
+  </main>
+
+  <script src="algorithms.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
