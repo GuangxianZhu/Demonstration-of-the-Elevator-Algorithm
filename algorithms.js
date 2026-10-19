@@ -144,7 +144,8 @@
    */
   function decide(algo, floor, dir, pending, N) {
     var others = pending.filter(function (p) { return p.floor !== floor; });
-    if (!others.length) {
+    // 本层若还剩请求，说明是现在不能接的反方向呼叫：只有 SCAN 会为它继续扫到尽头再回来
+    if (!others.length && !(algo === 'SCAN' && pending.length && dir)) {
       return { target: null, dir: 0, reason: '没有请求，原地待机。' };
     }
     var t;
@@ -168,7 +169,7 @@
     }
 
     // SCAN / LOOK
-    var d = startDir(floor, dir, others);
+    var d = startDir(floor, dir, others.length ? others : pending);
     var tries = [d, -d];
     for (var k = 0; k < 2; k++) {
       var td = tries[k];
@@ -176,7 +177,7 @@
       var ahead = aheadOf(floor, td, others);
       var end = endOf(td, N);
 
-      if (algo === 'SCAN' && k === 0 && floor !== end && (ahead.length || others.length)) {
+      if (algo === 'SCAN' && k === 0 && floor !== end) {
         // SCAN：只要还有请求，就沿当前方向一路扫到尽头
         var ps0 = ahead.filter(function (p) { return passable(p, td); });
         if (ps0.length) {

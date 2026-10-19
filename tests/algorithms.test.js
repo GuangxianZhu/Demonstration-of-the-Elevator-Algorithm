@@ -55,3 +55,45 @@ const st = E.stops('LOOK', 4, 0, [{ floor: 4, type: 'down', t: 0 }], 10);
 assert.strictEqual(st.serve.length, 1);
 assert.strictEqual(st.dir, -1);
 console.log('✓ 掉头与空闲开门正确');
+
+// SCAN 下行路过 2 楼时那里只有 ▲：不能接，要先扫到 1 楼再回头接
+const quiz = () => [
+  { floor: 7, type: 'car', t: 0 },
+  { floor: 6, type: 'down', t: 1 },
+  { floor: 9, type: 'down', t: 2 },
+  { floor: 2, type: 'up', t: 3 },
+];
+const expectOrder = {
+  FCFS: ['7楼(内) 6楼▼ 9楼▼ 2楼▲', 14],
+  SSTF: ['6楼▼ 7楼(内) 9楼▼ 2楼▲', 12],
+  SCAN: ['7楼(内) 9楼▼ 6楼▼ 2楼▲', 16],
+  LOOK: ['7楼(内) 9楼▼ 6楼▼ 2楼▲', 12],
+};
+for (const [a, [o, dist]] of Object.entries(expectOrder)) {
+  const q = E.run(a, 4, quiz(), 10, 1);
+  assert.strictEqual(order(q), o, a);
+  assert.strictEqual(q.distance, dist, a);
+}
+console.log('✓ 混合外呼场景四种算法顺序正确（含 SCAN 扫到尽头再回接）');
+
+// 随机压力测试：任何外呼/内呼组合，四种算法都必须把请求全部处理完（不卡死、不漏人）
+let seed = 42;
+const rnd = (n) => ((seed = (seed * 1103515245 + 12345) % 2147483648) % n);
+for (let trial = 0; trial < 2000; trial++) {
+  const N = 4 + rnd(12);
+  const reqsR = [];
+  const k = 1 + rnd(8);
+  for (let i = 0; i < k; i++) {
+    const f = 1 + rnd(N);
+    const types = ['car'].concat(f < N ? ['up'] : [], f > 1 ? ['down'] : []);
+    const type = types[rnd(types.length)];
+    if (!reqsR.some((p) => p.floor === f && p.type === type)) reqsR.push({ floor: f, type, t: i });
+  }
+  const start = 1 + rnd(N);
+  const dir = [-1, 0, 1][rnd(3)];
+  for (const a of ['FCFS', 'SSTF', 'SCAN', 'LOOK']) {
+    const q = E.run(a, start, reqsR, N, dir);
+    assert.strictEqual(q.served.length, reqsR.length, `${a} 漏了请求：N=${N} start=${start} dir=${dir} ${JSON.stringify(reqsR)}`);
+  }
+}
+console.log('✓ 2000 组随机场景全部处理完毕');
